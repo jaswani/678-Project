@@ -15,12 +15,17 @@
  * representation of a tree on to the pointer implementation
  * the array index is then used to find out the path to be 
  * taken to get to the appropriate node.
+ * 
+ * 04/05/2012: This might not be the most efficient way of implementing
+ * min heap as if my analsyis is correct cost of n insertions to 
+ * heap using this approach is O(nlgn) while using back pointers it
+ * is O(n+lgn). Will try to optimize this later..
  */
 
 
-/* create_node: create a new timer for a packet.
+/* mh_cr_node: create a new node
  */
-node *create_node (TIME time)
+node *mh_cr_node (TIME time)
 {
     node *timer = NULL;
     timer = malloc(sizeof(struct node_t));
@@ -34,14 +39,24 @@ node *create_node (TIME time)
     return timer;
 }
 
-int del_node(node *t)
+/* 
+ * mh_del_node: delete a node
+ */
+int mh_del_node(node *t)
 {
     if(t->left || t->right) {
-        DEBUG_NA("ERROR: Attempt to delete non leaf node");
+        DEBUG_NA("ERROR: Attempt to delete non leaf node\n");
         return 0;
     }
 
-    if(t->parent->left == t) {
+    if(!t->parent) {
+        DEBUG_NA("Deleting root..heap empty!\n");
+        free(t);
+        root = last = NULL;
+        return 1;
+    }
+
+    if(isleft(t)) {
         t->parent->left = NULL;
     } else {
         t->parent->right = NULL;
@@ -50,12 +65,16 @@ int del_node(node *t)
     t->left = t->right = t->parent = NULL;
 
     free(t);
+    return 1;
 }
 
-int inc_node(node *t, TIME new_time)
+/*
+ * mh_inc_key : increase the key of node t to the new value
+ */
+int mh_inc_key(node *t, TIME new_time)
 {
     if(!t) {
-       DEBUG_NA("Error: NULL agrument to inc_node");
+       DEBUG_NA("Error: NULL agrument to mh_inc_key");
         return 0;
     }
     while(t->parent) {
@@ -71,19 +90,26 @@ int inc_node(node *t, TIME new_time)
     return 1;
 }
 
-int heapify(node *t)
+/*
+ * mh_heapify: ensure the heap property is restored for
+ * the subtree rooted at node t
+ * Can also be used for decrease key..just a thought
+ */
+int mh_heapify(node *t)
 {
    node *temp = t;
    TIME p;
    if(!t) {
-       DEBUG_NA("Error: NULL agrument to heapify");
+       DEBUG_NA("Error: NULL agrument to mh_heapify");
        return 0;
    }
    while(1) {
        if(t->left) {
            if(t->left->time < t->time) {
                temp = t->left;
-           } else if( t->right && (t->right->time < temp->time)) {
+           } 
+           
+           if( t->right && (t->right->time < temp->time)) {
                temp = t->right;
            }
        }
@@ -92,121 +118,195 @@ int heapify(node *t)
            p = temp->time;
            temp->time = t->time;
            t->time = p;
-           temp = t;
+           t = temp;
        } else {
            break;
        }
    }
 }
 
+/*
+ * mh_find_next: Find the next node to which
+ * new leaves can be added
+ */
+node *mh_find_next(node *t)
+{
+    int flag = 1, found_left_ancestor = 0;
+    while(flag && t->parent) {
+        if(isleft(t)) {
+            /* t is the left child 
+             * Last iteration break after this
+             */
+            flag = 0;
+            found_left_ancestor = 1;
+        }
+        t = t->parent;
+    }
 
-int add_node(TIME time)
+    if(found_left_ancestor) {
+        /*go once to right*/
+        t = t->right;
+    }
+
+    while(!isleaf(t)) {
+        t = t->left;
+    }
+
+    return t;
+}
+ 
+/*
+ * mh_find_prev: Find the prev node to which
+ * new leaves were last added
+ */
+node *mh_find_prev(node *t)
+{
+    int flag = 1, found_right_ancestor = 0;
+    while(flag && t->parent) {
+        if(isright(t)) {
+            /* t is the right child 
+             * Last iteration break after this
+             */
+            flag = 0;
+            found_right_ancestor = 1;
+        }
+        t = t->parent;
+    }
+
+    if(found_right_ancestor) {
+        /*go once to left*/
+        t = t->left;
+    }
+
+    while(!isleaf(t)) {
+        t = t->right;
+    }
+    /*previous is non leaf*/
+    if(!isroot(t)) {
+        t = t->parent;
+    }
+    return t;
+}
+
+/*
+ * mh_add_key: Add a new key to the heap
+ */
+int mh_add_key(TIME time)
 {
     node *timer = NULL;
     node *iter = root;
     int i;
-    timer = create_node(time);
+    timer = mh_cr_node(time);
     if(!timer) {
         return 0;
     }
 
     if(!root) {
         /*empty heap*/
-        root = timer;
+        root = last = timer;
     } else {
-        /* Heap is not empty now we get into the index logic.
-         * Basically index tells the current node to which new
-         * leaf can be added.
-         */
-         for(i = base_index>>1; i > 0; i = i>>1) {
-             if(!iter) {
-                 /*Error*/
-                 DEBUG_NA("Error: iter becomes NULL in for\n");
-                 free(timer);
-             }
-             if (i & node_index) {
-                iter = iter->right;
-             } else {
-                iter = iter->left;
-             }
-         }
-
-         /* Now iter should point to the node where this new node
-          * can be added
-          */
-
-         if(!iter || (iter->left && iter->right)) {
-             /*Something has gone wrong*/
-             DEBUG_NA("Error: iter is NULL\n");
-             free(timer);
-             return 0;
-         }
-
-         if(!iter->left) {
-            iter->left = timer;
-         } else {
-            iter->right = timer;
-            node_index++;
-            if(node_index > base_index) {
-                base_index = base_index << 1;
-            }
-         }
-         timer->parent = iter;
+        if(last->right) {
+            /*This last is full find next*/
+            last = mh_find_next(last);
+        }
+        
+        
+        if(!last->left) {
+            /*Left slot is empty*/
+            last->left = timer;
+        } else {
+            last->right = timer;
+        }
+        timer->parent = last;
     }
     /*Success*/
-    //FIXME: Call to increase key needs to go here..
-    inc_node(timer, time);
+    mh_inc_key(timer, time);
     return 1;
-}        
-    
-TIME extract_min()
+}
+
+/*
+ * mh_remove_key: Remove a key to the heap
+ */
+int mh_remove_key(node *timer)
 {
-    node *iter = root;
-    TIME ret_val = root->time;
-    int i;
-    for(i = base_index>>1; i > 0; i = i>>1) {
-        if(!iter) {
-            /*Error*/
-            DEBUG_NA("Error: iter becomes NULL in for\n");
-        }
-        if (i & node_index) {
-            iter = iter->right;
+    node *iter = last;
+    int flag = 0;
+
+    if(!isleaf(last)) {
+        /*More than one element in the list*/
+        if(last->right) {
+            iter = last->right;
         } else {
-            iter = iter->left;
+            iter = last->left;
+            flag = 1;
         }
-    }
-
-    if(iter->left) {
-        iter = iter->left;
-    }
-
-    root->time = iter->time;
-    del_node(iter);
-    if(node_index > 1) {
-        node_index--;
-    } else {
-        root = NULL;
+        timer->time = iter->time;
     }
     
-    if((base_index >> 1 > node_index)) {
-        base_index = base_index >> 1;
+    mh_del_node(iter);
+    if(flag && last) {
+        /* Now last has become a leaf
+         * find the prev non leaf last
+         */
+        //DEBUG("last before = %d\n", last->time);
+        last = mh_find_prev(last);
+      //  DEBUG("last after = %d\n", last->time);
     }
+    
+    mh_heapify(timer);
+    //DEBUG("last after = %d\n", last->time);
+}
 
-    heapify(root);
+/*
+ * mh_extract_min: Extract min key to the heap
+ */
+TIME mh_extract_min()
+{
+    TIME ret_val = root->time;
+    mh_remove_key(root);
     return ret_val;
 }
 
-TIME read_min()
+/*
+ * mh_min_key: Return data of the min key
+ */
+TIME mh_min_key()
 {
     return root->time;
 }
    
 main(int argc, char *argv[]) 
 { 
-    if(argc == 1)
-        DEBUG_NA("This is dummy function \n");
-    else 
-        DEBUG("This is dummy function %d %s\n", argc, argv[1]);
+    TIME value;
+    int i, iterations;
+    
+    if(argc == 1) {
+        printf("Usage ./a.out <no of elements> \n");
+        return;
+    } else {
+        iterations = atoi(argv[1]);
+        DEBUG("iterations =  %d\n", i);
+    }
+    
+    printf("Inserting: \n");
+
+    for(i=0; i<iterations;i++) {
+        value = rand()%1000;
+        printf("%d ..", value);
+        mh_add_key(value);
+    }
+
+    printf("\nExtracting: \n");
+    
+    while(i--) {
+        /*printf("\nPreorder: ");
+        preorder(root);
+        printf("\n");*/
+        value = mh_extract_min();
+        printf("%d ..", value);
+    }
+    
+    printf("\n");
 }
     
     
